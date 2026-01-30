@@ -45,19 +45,40 @@
 
 ## 🚀 使用方法 | Usage
 
-使用非常简单，只需在命令行中运行脚本并指定视频文件路径即可。
+1. 基础用法（你最想要的功能）
+将脚本和视频放在同一目录，直接运行：
 
-```bash
-python videoSlicer.py [视频文件名]
-```
+   ```bash
+python extract_slides.py 你的视频名.mp4
+   ```
+程序会自动在当前目录下创建一个名为 你的视频名_slides 的文件夹。
 
-**示例：**
+所有裁切好的图片都会保存在里面。
 
-```bash
-python videoSlicer.py meme_collection.mp4
-```
+2. 进阶用法（如果默认效果不好）
+如果默认设置切得不干净，或者漏掉了幻灯片，你可以不用改代码，直接加参数运行：
 
-运行结束后，提取出的图片将保存在自动生成的输出文件夹中。
+如果黑边没切干净（增加 --crop 参数）：
+
+   ```bash
+python extract_slides.py video.mp4 --crop 30
+   ```
+如果漏掉了某些幻灯片（减小 --diff 参数）：
+
+   ```bash
+python extract_slides.py video.mp4 --diff 5
+   ```
+如果PPT翻页特别快（减小 --interval 时间间隔）：
+
+   ```bash
+python extract_slides.py video.mp4 --interval 0.5
+   ```
+查看帮助：
+
+
+   ```bash
+python extract_slides.py -h
+   ```
 
 ## 📝 开发日志
 
@@ -67,5 +88,5 @@ python videoSlicer.py meme_collection.mp4
 ---
 
 <div align="center">
-  <sub>Made with ❤️ by [您的名字/ID]</sub>
+  <sub>Made with ❤️ by Throstle</sub>
 </div>
