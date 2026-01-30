@@ -1,58 +1,54 @@
 import cv2
 import os
 import numpy as np
+import argparse
+import sys
 
 def auto_crop_image(image, black_threshold=15):
     """
     自动识别并去除图像四周的黑边。
-    
-    参数:
-    image: 输入的 OpenCV 图像数据
-    black_threshold: 判断为黑色的亮度阈值(0-255)。
-                     有些视频的黑色不是纯黑(0)，可能是深灰(如10左右)，
-                     建议设置在 10-20 之间以容忍视频压缩噪声。
     """
-    # 1. 转为灰度图
+    # 转为灰度图
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # 2. 创建二值掩膜：亮度大于阈值的区域设为白色(255)，其余为黑色(0)
-    # 这一步是为了找出“有内容”的区域
+    # 创建二值掩膜
     _, mask = cv2.threshold(gray, black_threshold, 255, cv2.THRESH_BINARY)
 
-    # 3. 查找所有白色像素点（有效内容）的坐标
-    # np.where 返回的是一个元组 (行索引数组, 列索引数组)
+    # 查找所有白色像素点（有效内容）的坐标
     coords = np.where(mask > 0)
 
-    # 如果没有找到任何有效内容（比如遇到了一张全黑的图），返回原图，防止报错
+    # 如果全黑，返回原图
     if len(coords[0]) == 0 or len(coords[1]) == 0:
-        print("警告: 检测到全黑图像，跳过裁切。")
         return image
 
-    # 4. 获取有效内容区域的边界框
-    top = np.min(coords[0])      # 最小行索引
-    bottom = np.max(coords[0])   # 最大行索引
-    left = np.min(coords[1])     # 最小列索引
-    right = np.max(coords[1])    # 最大列索引
+    # 获取边界框
+    top_row = np.min(coords[0])
+    bottom_row = np.max(coords[0])
+    left_col = np.min(coords[1])
+    right_col = np.max(coords[1])
 
-    # 5. 根据边界框裁切原图
-    # 注意切片时右边和下边要 +1，因为切片是左闭右开区间
-    cropped_image = image[top:bottom+1, left:right+1]
+    # 裁切 (注意切片是左闭右开)
+    cropped_image = image[top_row:bottom_row+1, left_col:right_col+1]
 
     return cropped_image
 
-def extract_unique_slides(video_path, output_folder, diff_threshold=30, min_interval=1.0, crop_black_threshold=15):
-    """
-    从幻灯片视频中提取不重复的静帧，并自动去除黑边。
-    """
+def extract_slides(video_path, output_folder, diff_threshold, min_interval, crop_threshold):
+    # 检查视频是否存在
     if not os.path.exists(video_path):
-        print(f"错误: 找不到文件 {video_path}")
+        print(f"❌ 错误: 找不到文件 '{video_path}'")
         return
+
+    # 自动创建输出目录
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
+        print(f"📂 已创建输出目录: {output_folder}")
+
+    print(f"🚀 开始处理视频: {video_path}")
+    print(f"⚙️  配置: 差异阈值={diff_threshold}, 最小间隔={min_interval}s, 黑边阈值={crop_threshold}")
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print("无法打开视频文件")
+        print("❌ 无法打开视频文件")
         return
 
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -60,58 +56,82 @@ def extract_unique_slides(video_path, output_folder, diff_threshold=30, min_inte
 
     # --- 处理第一帧 ---
     ret, prev_frame = cap.read()
-    if not ret: return
+    if not ret:
+        print("❌ 视频似乎是空的")
+        return
 
     slide_count = 1
-    # 【关键修改点 1】保存前先裁切
-    cropped_first_frame = auto_crop_image(prev_frame, crop_black_threshold)
-    
-    filename = os.path.join(output_folder, f"slide_{slide_count:03d}.jpg")
-    cv2.imwrite(filename, cropped_first_frame)
-    print(f"已保存: {filename} (初始帧)")
+    # 裁切并保存第一帧
+    cropped_first = auto_crop_image(prev_frame, crop_threshold)
+    output_name = os.path.join(output_folder, f"slide_{slide_count:03d}.jpg")
+    cv2.imwrite(output_name, cropped_first)
+    print(f"📸 已保存: {output_name} (初始帧)")
 
     prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
     last_saved_frame_idx = 0
     curr_frame_idx = 0
 
-    # --- 循环处理后续帧 ---
+    # --- 循环处理 ---
     while True:
         ret, curr_frame = cap.read()
-        if not ret: break 
+        if not ret:
+            break
+        
         curr_frame_idx += 1
 
+        # 跳过间隔期
         if (curr_frame_idx - last_saved_frame_idx) < min_frames_interval:
             continue
 
+        # 计算差异
         curr_gray = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2GRAY)
         score = np.mean(cv2.absdiff(prev_gray, curr_gray))
 
+        # 判定翻页
         if score > diff_threshold:
             slide_count += 1
-            # 【关键修改点 2】保存前先裁切
-            # 注意：我们裁切用于保存的 curr_frame，但对比差异依然用原始的 curr_gray
-            cropped_curr_frame = auto_crop_image(curr_frame, crop_black_threshold)
             
-            filename = os.path.join(output_folder, f"slide_{slide_count:03d}.jpg")
-            cv2.imwrite(filename, cropped_curr_frame)
-            print(f"已保存: {filename} (差异分值: {score:.2f})")
+            # 裁切当前帧
+            cropped_curr = auto_crop_image(curr_frame, crop_threshold)
+            
+            output_name = os.path.join(output_folder, f"slide_{slide_count:03d}.jpg")
+            cv2.imwrite(output_name, cropped_curr)
+            print(f"📸 已保存: {output_name} (差异度: {score:.2f})")
             
             prev_gray = curr_gray
             last_saved_frame_idx = curr_frame_idx
 
     cap.release()
-    print("--- 提取并裁切完成 ---")
+    print(f"\n✅ 处理完成! 共提取 {slide_count} 张幻灯片。")
+    print(f"📂 文件保存在: {output_folder}")
 
-# ================= 配置区域 =================
-video_file = "l.mp4"  # 你的视频文件名
-output_dir = "slides_cropped_output" # 结果保存的文件夹
+if __name__ == "__main__":
+    # 配置命令行参数解析器
+    parser = argparse.ArgumentParser(description="从视频中提取幻灯片并自动去除黑边。")
+    
+    # 必需参数：视频路径
+    parser.add_argument("video_path", help="视频文件的路径 (例如: video.mp4)")
+    
+    # 可选参数
+    parser.add_argument("--diff", type=float, default=15.0, help="判定翻页的画面差异阈值 (默认: 15.0)")
+    parser.add_argument("--interval", type=float, default=2.0, help="两次截图之间的最小间隔秒数 (默认: 2.0)")
+    parser.add_argument("--crop", type=int, default=15, help="判定黑边的亮度阈值 (0-255, 默认: 15)")
+    parser.add_argument("--out", type=str, default=None, help="自定义输出文件夹名称 (默认: 视频文件名_slides)")
 
-extract_unique_slides(
-    video_path=video_file, 
-    output_folder=output_dir, 
-    diff_threshold=15,      # 判断是否翻页的阈值
-    min_interval=2.0,       # 最小间隔时间
-    crop_black_threshold=15 # 【新参数】判断是否为黑边的阈值 (0-255)
-                            # 如果发现切得不够干净（还有黑边），把这个值调大一点（比如 25）
-                            # 如果发现把正常的深色图片内容切掉了，把这个值调小一点（比如 5）
-)
+    args = parser.parse_args()
+
+    # 如果没有指定输出目录，自动根据视频文件名生成
+    # 例如 video.mp4 -> video_slides 文件夹
+    if args.out is None:
+        video_name = os.path.splitext(os.path.basename(args.video_path))[0]
+        output_dir = f"{video_name}_slides"
+    else:
+        output_dir = args.out
+
+    extract_slides(
+        video_path=args.video_path,
+        output_folder=output_dir,
+        diff_threshold=args.diff,
+        min_interval=args.interval,
+        crop_threshold=args.crop
+    )
